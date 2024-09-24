@@ -1,7 +1,9 @@
 # main.py
-
+from pydantic import BaseModel
+from typing import Dict
 import requests
-from fastapi import FastAPI, Depends, HTTPException, status, Form
+import json  
+from fastapi import FastAPI, Depends, HTTPException, status, Form,Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from firebase_admin import auth as admin_auth, firestore
 from config.firebase_config import firestore_db  # Import the Firestore client
@@ -192,3 +194,71 @@ def refresh_token(refresh_token: str = Form(...)):
 def another_route(decoded_token=Depends(verify_token)):
     # Access user info from decoded_token if needed
     return {"message": "This is a protected route"}
+
+
+
+
+@app.post("/applyLeave")
+def apply_leave(
+    leave_type: str = Form(...),
+    half: str = Form(None),  # Default value set to None
+    from_date: str = Form(...),
+    to_date: str = Form(...),
+    no_of_days: str = Form(...),
+    applied_on: str = Form(...),
+    reason_for_leave: str = Form(...),
+    adjusted_to: str = Form(...),  # Receiving adjusted_to as a string
+    username: str = Form(...),
+    decoded_token=Depends(verify_token)
+):
+    try:
+        # Convert the adjusted_to string to a dictionary
+        try:
+            adjusted_to_dict = json.loads(adjusted_to)  # Convert string to dictionary
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid format for adjusted_to. Please send a valid JSON string.")
+        
+        # Check if the user exists in Firestore
+        users_ref = firestore_db.collection('users')
+        query = users_ref.where('username', '==', username).limit(1).stream()
+        user_exists = False
+        user_doc_id = None
+        
+        for user_doc in query:
+            user_exists = True
+            user_doc_id = user_doc.id
+        
+        if not user_exists:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Ensure leave application doesn't overlap with existing leaves
+        leave_ref = firestore_db.collection('leaves').where('username', '==', username).stream()
+        for leave in leave_ref:
+            existing_leave = leave.to_dict()
+            if (from_date <= existing_leave['to_date'] and to_date >= existing_leave['from_date']):
+                raise HTTPException(status_code=400, detail="Leave dates overlap with existing leave")
+
+        # Save leave data to Firestore (leaves collection)
+        leave_data = {
+            "username": username,
+            "leave_type": leave_type,
+            "half": half,  # Add half to leave_data, it will be None if not provided
+            "from_date": from_date,
+            "to_date": to_date,
+            "no_of_days": no_of_days,
+            "applied_on": applied_on,
+            "reason_for_leave": reason_for_leave,
+            "adjusted_to": adjusted_to_dict,  # Save as a dictionary in Firestore
+            "status": "pending"
+        }
+        firestore_db.collection('leaves').add(leave_data)
+
+        return {"message": "Leave applied successfully"}
+    
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        error_message = str(e)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+
+
