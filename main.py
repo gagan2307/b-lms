@@ -28,7 +28,7 @@ def root():
 
 # Sign-up endpoint
 @app.post("/addUser")
-def signup(
+def add_user(
     email: str = Form(...),
     password: str = Form(...),
     username: str = Form(...),
@@ -73,7 +73,7 @@ def signup(
         # You need to send this link to the user's email address
         # Implement email sending functionality (e.g., using SMTP, SendGrid)
 
-        return {"message": "User created successfully", "uid": uid}
+        return {"message": "User created successfully", "uid": uid, "verificationLink": link}
     except admin_auth.EmailAlreadyExistsError:
         raise HTTPException(status_code=400, detail="Email already exists")
     except HTTPException as http_exc:
