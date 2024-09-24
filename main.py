@@ -1,39 +1,43 @@
 # main.py
-from pydantic import BaseModel
-from typing import Dict
+
+# Importing Base Libraries
+import os
 import requests
 import bcrypt
-import smtplib  # Import smtplib for SMTP
-from email.mime.text import MIMEText  # Import MIMEText
-from email.mime.multipart import MIMEMultipart  # Import MIMEMultipart
 import json  
 import uuid
+
+# Importing Additional Libraries
+from pydantic import BaseModel
+from typing import Dict
 from fastapi import FastAPI, Depends, HTTPException, status, Form,Body
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from firebase_admin import auth as admin_auth, firestore
+from fastapi.security import HTTPBearer
+from firebase_admin import auth as admin_auth
 from config.firebase_config import firestore_db  # Import the Firestore client
 from dotenv import load_dotenv
-import os
+
+# Importing Helper Functions
+from helper import parse_firebase_error, get_current_user, send_registration_email, verify_token
 
 # Load environment variables
 load_dotenv()
 
+# Initialising FastAPI
 app = FastAPI()
 security = HTTPBearer()
 
-# Helper function to parse Firebase errors
-def parse_firebase_error(e):
-    try:
-        error_message = str(e)
-        return error_message
-    except Exception:
-        return "An unknown error occurred."
-
+# -----------------------------------------------------------------------
+# App Routes
+# Base Route
+# -----------------------------------------------------------------------
 @app.get('/')
 def root():
     return {'message': 'This is the Base URL'}
 
+# -----------------------------------------------------------------------
+# App Routes
 # Add-User endpoint
+# -----------------------------------------------------------------------
 @app.post("/addUser")
 def add_user(
     email: str = Form(...),
@@ -98,21 +102,10 @@ def add_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    try:
-        token = credentials.credentials
-        decoded_token = admin_auth.verify_id_token(token)
-        uid = decoded_token['uid']
-        # Fetch user data from Firestore
-        user_doc = firestore_db.collection('users').document(uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            return user_data
-        else:
-            raise HTTPException(status_code=404, detail="User not found")
-    except Exception as e:
-        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
-
+# -----------------------------------------------------------------------
+# App Routes
+# Delete User via Admin Only
+# -----------------------------------------------------------------------
 @app.delete("/deleteUser")
 def delete_user(
     email: str = Form(...),
@@ -139,56 +132,11 @@ def delete_user(
         error_message = parse_firebase_error(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
     
-def send_registration_email(to_email, uid, password, verification_link):
-    smtp_port = int(os.getenv('SMTP_PORT', '587'))
-    smtp_username = os.getenv('SMTP_USERNAME')
-    smtp_password = os.getenv('SMTP_PASSWORD')
-    smtp_server = os.getenv('SMTP_SERVER')
 
-    try:
-        # Create the email content
-        subject = "Your Account Details and Verification Link"
-        body = f"""
-        Dear User,
-
-        Your account has been created successfully. Below are your account details:
-
-        Email:{to_email}
-        UID: {uid}
-        Password: {password}
-
-        Please verify your email address by clicking on the link below:
-        {verification_link}
-
-        Best regards,
-        Babagang and Co.
-        """
-
-        # Set up the MIME
-        message = MIMEMultipart()
-        message['From'] = smtp_username
-        message['To'] = to_email
-        message['Subject'] = subject
-
-        # Attach the body with the msg instance
-        message.attach(MIMEText(body, 'plain'))
-
-        # Create SMTP session
-        session = smtplib.SMTP(smtp_server, smtp_port)  # Use Gmail's SMTP server
-        session.starttls()  # Enable security
-        session.set_debuglevel(1)
-        session.login(smtp_username, smtp_password)  # Login with your email and app password
-
-        text = message.as_string()
-        session.sendmail(smtp_username, to_email, text)
-        session.quit()
-        return f"Email Successfull Sent"
-    except Exception as e:
-        # Log the exception or handle accordingly
-        print(f"Failed to send email: {e}")
-        # Optionally, you might want to raise an exception or handle the error
-
+# -----------------------------------------------------------------------
+# App Routes
 # Sign-in endpoint
+# -----------------------------------------------------------------------
 @app.post("/signin")
 def signin(email: str = Form(...), password: str = Form(...)):
     try:
@@ -233,37 +181,11 @@ def signin(email: str = Form(...), password: str = Form(...)):
         error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
-# Token verification dependency
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    id_token = credentials.credentials
-    try:
-        decoded_token = admin_auth.verify_id_token(id_token)
-        if not decoded_token.get('email_verified'):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Email not verified",
-            )
-        return decoded_token
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 
-# Protected route example
-@app.get("/protected")
-def protected_route(decoded_token=Depends(verify_token)):
-    email = decoded_token.get('email')
-    return {"message": f"Welcome {email}"}
-
-# Logout endpoint (handled on the client-side)
-@app.post("/logout")
-def logout():
-    # Firebase tokens are stateless; logout is managed client-side
-    return {"message": "User logged out successfully"}
-
+# -----------------------------------------------------------------------
+# App Routes
 # Refresh token endpoint
+# -----------------------------------------------------------------------
 @app.post("/refresh-token")
 def refresh_token(refresh_token: str = Form(...)):
     try:
@@ -291,18 +213,11 @@ def refresh_token(refresh_token: str = Form(...)):
     except Exception as e:
         error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
-
-# Another protected route example
-@app.get("/another-protected-route")
-def another_route(decoded_token=Depends(verify_token)):
-    # Access user info from decoded_token if needed
-    return {"message": "This is a protected route"}
-
-
-
-
-
-
+    
+# -----------------------------------------------------------------------
+# App Routes
+# Apply Leave for User
+# -----------------------------------------------------------------------
 @app.post("/applyLeave")
 def apply_leave(
     leave_type: str = Form(...),
@@ -448,3 +363,109 @@ def my_leave_history(
     except Exception as e:
         error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+
+    
+# -----------------------------------------------------------------------
+# App Routes
+# User Leave History
+# -----------------------------------------------------------------------
+@app.get("/myLeaveHistory")
+def my_leave_history(
+    decoded_token=Depends(verify_token),
+    current_user: dict = Depends(get_current_user)  # Ensure the user is logged in
+):
+    try:
+        print(current_user)
+        # Get the username from the decoded token
+        username = current_user.get("username")
+        
+        # Check if the user exists and has the role 'user'
+        users_ref = firestore_db.collection('users')
+        query = users_ref.where('username', '==', username).limit(1).stream()
+        user_data = None
+        user_doc_id = None
+        
+        for user_doc in query:
+            
+            user_data = user_doc.to_dict()
+            
+            user_doc_id = user_doc.id
+            
+        
+        if not user_data:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if user_data.get('role') != 'user':
+            raise HTTPException(status_code=403, detail="Access denied. Only users can view their leave history.")
+
+        # Get the user's first and last name
+        first_name = user_data.get("firstname", "")
+        last_name = user_data.get("lastname", "")
+        full_name = f"{first_name} {last_name}"
+
+        # Fetch all leave_ids associated with the user from the user's leaves field
+        user_leaves = current_user.get("leaves", [])
+        print(user_leaves)
+
+        # Fetch leave details from the leaves collection using the leave_ids
+        leave_history = []
+        if user_leaves:
+            leaves_ref = firestore_db.collection('leaves')
+            for leave_id in user_leaves:
+                leave_query = leaves_ref.where("leave_id", "==", leave_id).limit(1).stream()
+                for leave in leave_query:
+                    leave_data = leave.to_dict()
+                    leave_history.append({
+                        "applied_on": leave_data.get("applied_on"),
+                        "from_date": leave_data.get("from_date"),
+                        "to_date": leave_data.get("to_date"),
+                        "leave_type": leave_data.get("leave_type"),
+                        "status": leave_data.get("status"),
+                        "reason_for_leave":leave_data.get("reason_for_leave"),
+                        "admin_remark":leave_data.get("admin_remark")
+                        
+                    })
+
+        # Return the user's full name and leave history
+        return {
+            "name": full_name,
+            "leave_history": leave_history
+        }
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        error_message = str(e)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+
+    
+
+# -----------------------------------------------------------------------
+# App Routes
+# Protected route example
+# -----------------------------------------------------------------------
+@app.get("/protected")
+def protected_route(decoded_token=Depends(verify_token)):
+    email = decoded_token.get('email')
+    return {"message": f"Welcome {email}"}
+
+# -----------------------------------------------------------------------
+# App Routes
+# Logout endpoint (handled on the client-side)
+# -----------------------------------------------------------------------
+@app.post("/logout")
+def logout():
+    # Firebase tokens are stateless; logout is managed client-side
+    return {"message": "User logged out successfully"}
+
+
+# -----------------------------------------------------------------------
+# App Routes
+# Another protected route example
+# -----------------------------------------------------------------------
+@app.get("/another-protected-route")
+def another_route(decoded_token=Depends(verify_token)):
+    # Access user info from decoded_token if needed
+    return {"message": "This is a protected route"}
+
+
