@@ -192,3 +192,60 @@ def refresh_token(refresh_token: str = Form(...)):
 def another_route(decoded_token=Depends(verify_token)):
     # Access user info from decoded_token if needed
     return {"message": "This is a protected route"}
+
+@app.post('applyLeave')
+def apply_leave(
+    leave_type: str = Form(...),
+    from_date: str = Form(...),
+    to_date: str = Form(...),
+    no_of_days: str = Form(...),
+    applied_on: str = Form(...),
+    reason_for_leave: str = Form(...),
+    adjusted_to: dict = Form(...),
+    username: str = Form(...),
+    decoded_token=Depends(verify_token)
+):
+    try:
+        # Check if the username already exists
+        users_ref = firestore_db.collection('users')
+        query = users_ref.where('username', '==', username).limit(1).stream()
+        if any(query):
+            # Username is taken
+            raise HTTPException(status_code=400, detail="Username is already taken")
+
+        # Create user in Firebase Auth using Firebase Admin SDK
+        user_record = admin_auth.create_user(
+            email=email,
+            password=password
+        )
+        uid = user_record.uid
+
+        # Create the Firestore user document with the given structure
+        user_data = {
+            "email": email,
+            "username": username,
+            "firstname": firstname,
+            "lastname": lastname,
+            "dept": dept,
+            "emp_type": emp_type,
+            "leaves": [],
+            "role": 'user'
+        }
+
+        # Save user data to Firestore (users collection)
+        firestore_db.collection('users').document(uid).set(user_data)
+
+        # Optional: Send email verification link
+        link = admin_auth.generate_email_verification_link(email)
+        # You need to send this link to the user's email address
+        # Implement email sending functionality (e.g., using SMTP, SendGrid)
+
+        return {"message": "User created successfully", "uid": uid, "verificationLink": link}
+    except admin_auth.EmailAlreadyExistsError:
+        raise HTTPException(status_code=400, detail="Email already exists")
+    except HTTPException as http_exc:
+        # Re-raise HTTP exceptions
+        raise http_exc
+    except Exception as e:
+        error_message = parse_firebase_error(e)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
