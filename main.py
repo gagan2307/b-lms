@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Dict
 import requests
 import json  
+import uuid
 from fastapi import FastAPI, Depends, HTTPException, status, Form,Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from firebase_admin import auth as admin_auth, firestore
@@ -198,6 +199,8 @@ def another_route(decoded_token=Depends(verify_token)):
 
 
 
+
+
 @app.post("/applyLeave")
 def apply_leave(
     leave_type: str = Form(...),
@@ -223,10 +226,12 @@ def apply_leave(
         query = users_ref.where('username', '==', username).limit(1).stream()
         user_exists = False
         user_doc_id = None
-        
+        user_leaves = []
+
         for user_doc in query:
             user_exists = True
             user_doc_id = user_doc.id
+            user_leaves = user_doc.to_dict().get('leaves', [])  # Retrieve the user's current leaves list
         
         if not user_exists:
             raise HTTPException(status_code=404, detail="User not found")
@@ -238,8 +243,12 @@ def apply_leave(
             if (from_date <= existing_leave['to_date'] and to_date >= existing_leave['from_date']):
                 raise HTTPException(status_code=400, detail="Leave dates overlap with existing leave")
 
+        # Generate a unique leave_id (you can use UUID or Firestore document ID)
+        leave_id = str(uuid.uuid4())  # Alternatively, use firestore_db.collection('leaves').document().id for Firestore-generated ID
+
         # Save leave data to Firestore (leaves collection)
         leave_data = {
+            "leave_id": leave_id,  # Add unique leave ID
             "username": username,
             "leave_type": leave_type,
             "half": half,  # Add half to leave_data, it will be None if not provided
@@ -251,14 +260,16 @@ def apply_leave(
             "adjusted_to": adjusted_to_dict,  # Save as a dictionary in Firestore
             "status": "pending"
         }
-        firestore_db.collection('leaves').add(leave_data)
+        firestore_db.collection('leaves').document(leave_id).set(leave_data)
 
-        return {"message": "Leave applied successfully"}
+        # Append the leave_id to the user's leaves list and update the user document
+        user_leaves.append(leave_id)
+        users_ref.document(user_doc_id).update({"leaves": user_leaves})
+
+        return {"message": "Leave applied successfully", "leave_id": leave_id}
     
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
         error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
-
-
