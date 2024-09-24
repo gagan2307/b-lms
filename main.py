@@ -1,11 +1,14 @@
 # main.py
-
+from pydantic import BaseModel
+from typing import Dict
 import requests
 import bcrypt
 import smtplib  # Import smtplib for SMTP
 from email.mime.text import MIMEText  # Import MIMEText
 from email.mime.multipart import MIMEMultipart  # Import MIMEMultipart
-from fastapi import FastAPI, Depends, HTTPException, status, Form
+import json  
+import uuid
+from fastapi import FastAPI, Depends, HTTPException, status, Form,Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from firebase_admin import auth as admin_auth, firestore
 from config.firebase_config import firestore_db  # Import the Firestore client
@@ -295,59 +298,80 @@ def another_route(decoded_token=Depends(verify_token)):
     # Access user info from decoded_token if needed
     return {"message": "This is a protected route"}
 
-@app.post('applyLeave')
+
+
+
+
+
+@app.post("/applyLeave")
 def apply_leave(
     leave_type: str = Form(...),
+    half: str = Form(None),  # Default value set to None
     from_date: str = Form(...),
     to_date: str = Form(...),
     no_of_days: str = Form(...),
     applied_on: str = Form(...),
     reason_for_leave: str = Form(...),
-    adjusted_to: dict = Form(...),
+    adjusted_to: str = Form(...),  # Receiving adjusted_to as a string
     username: str = Form(...),
     decoded_token=Depends(verify_token)
 ):
     try:
-        # Check if the username already exists
+        # Convert the adjusted_to string to a dictionary
+        try:
+            adjusted_to_dict = json.loads(adjusted_to)  # Convert string to dictionary
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid format for adjusted_to. Please send a valid JSON string.")
+        
+        # Check if the user exists in Firestore
         users_ref = firestore_db.collection('users')
         query = users_ref.where('username', '==', username).limit(1).stream()
-        if any(query):
-            # Username is taken
-            raise HTTPException(status_code=400, detail="Username is already taken")
+        user_exists = False
+        user_doc_id = None
+        user_leaves = []
 
-        # Create user in Firebase Auth using Firebase Admin SDK
-        user_record = admin_auth.create_user(
-            email=email,
-            password=password
-        )
-        uid = user_record.uid
+        for user_doc in query:
+            user_exists = True
+            user_doc_id = user_doc.id
+            user_leaves = user_doc.to_dict().get('leaves', [])  # Retrieve the user's current leaves list
+        
+        if not user_exists:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Ensure leave application doesn't overlap with existing leaves
+        leave_ref = firestore_db.collection('leaves').where('username', '==', username).stream()
+        for leave in leave_ref:
+            existing_leave = leave.to_dict()
+            if (from_date <= existing_leave['to_date'] and to_date >= existing_leave['from_date']):
+                raise HTTPException(status_code=400, detail="Leave dates overlap with existing leave")
 
-        # Create the Firestore user document with the given structure
-        user_data = {
-            "email": email,
+        # Generate a unique leave_id (you can use UUID or Firestore document ID)
+        leave_id = str(uuid.uuid4())  # Alternatively, use firestore_db.collection('leaves').document().id for Firestore-generated ID
+
+        # Save leave data to Firestore (leaves collection)
+        leave_data = {
+            "leave_id": leave_id,  # Add unique leave ID
             "username": username,
-            "firstname": firstname,
-            "lastname": lastname,
-            "dept": dept,
-            "emp_type": emp_type,
-            "leaves": [],
-            "role": 'user'
+            "leave_type": leave_type,
+            "half": half,  # Add half to leave_data, it will be None if not provided
+            "from_date": from_date,
+            "to_date": to_date,
+            "no_of_days": no_of_days,
+            "applied_on": applied_on,
+            "reason_for_leave": reason_for_leave,
+            "adjusted_to": adjusted_to_dict,  # Save as a dictionary in Firestore
+            "status": "pending"
         }
+        firestore_db.collection('leaves').document(leave_id).set(leave_data)
 
-        # Save user data to Firestore (users collection)
-        firestore_db.collection('users').document(uid).set(user_data)
+        # Append the leave_id to the user's leaves list and update the user document
+        user_leaves.append(leave_id)
+        users_ref.document(user_doc_id).update({"leaves": user_leaves})
 
-        # Optional: Send email verification link
-        link = admin_auth.generate_email_verification_link(email)
-        # You need to send this link to the user's email address
-        # Implement email sending functionality (e.g., using SMTP, SendGrid)
-
-        return {"message": "User created successfully", "uid": uid, "verificationLink": link}
-    except admin_auth.EmailAlreadyExistsError:
-        raise HTTPException(status_code=400, detail="Email already exists")
+        return {"message": "Leave applied successfully", "leave_id": leave_id}
+    
     except HTTPException as http_exc:
-        # Re-raise HTTP exceptions
         raise http_exc
     except Exception as e:
-        error_message = parse_firebase_error(e)
+        error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)

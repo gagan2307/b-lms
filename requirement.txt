@@ -1,0 +1,6 @@
+fastapi
+requests
+bcrypt
+firebase_admin
+pyrebase4
+fastapi[standard]
