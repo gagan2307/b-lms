@@ -2,6 +2,10 @@
 from pydantic import BaseModel
 from typing import Dict
 import requests
+import bcrypt
+import smtplib  # Import smtplib for SMTP
+from email.mime.text import MIMEText  # Import MIMEText
+from email.mime.multipart import MIMEMultipart  # Import MIMEMultipart
 import json  
 import uuid
 from fastapi import FastAPI, Depends, HTTPException, status, Form,Body
@@ -29,7 +33,7 @@ def parse_firebase_error(e):
 def root():
     return {'message': 'This is the Base URL'}
 
-# Sign-up endpoint
+# Add-User endpoint
 @app.post("/addUser")
 def add_user(
     email: str = Form(...),
@@ -56,6 +60,9 @@ def add_user(
         )
         uid = user_record.uid
 
+        # Hash the password using bcrypt
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
         # Create the Firestore user document with the given structure
         user_data = {
             "email": email,
@@ -65,7 +72,8 @@ def add_user(
             "dept": dept,
             "emp_type": emp_type,
             "leaves": [],
-            "role": 'user'
+            "role": 'user',
+            "password": hashed_password  
         }
 
         # Save user data to Firestore (users collection)
@@ -76,7 +84,10 @@ def add_user(
         # You need to send this link to the user's email address
         # Implement email sending functionality (e.g., using SMTP, SendGrid)
 
-        return {"message": "User created successfully", "uid": uid, "verificationLink": link}
+        # Send email containing uid, password, and verification link
+        response = send_registration_email(email, uid, password, link)
+
+        return {"message": "User created successfully", "uid": uid, "verificationLink": link, "Email Status": response}
     except admin_auth.EmailAlreadyExistsError:
         raise HTTPException(status_code=400, detail="Email already exists")
     except HTTPException as http_exc:
@@ -85,6 +96,97 @@ def add_user(
     except Exception as e:
         error_message = parse_firebase_error(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        token = credentials.credentials
+        decoded_token = admin_auth.verify_id_token(token)
+        uid = decoded_token['uid']
+        # Fetch user data from Firestore
+        user_doc = firestore_db.collection('users').document(uid).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            return user_data
+        else:
+            raise HTTPException(status_code=404, detail="User not found")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+
+@app.delete("/deleteUser")
+def delete_user(
+    email: str = Form(...),
+    current_user: dict = Depends(get_current_user)
+):
+    # Authorization check: only admins can delete users
+    if current_user.get('role') != 'admin':
+        
+        raise HTTPException(status_code=403, detail="Not authorized to perform this action")
+
+    try:
+        # Find user by email in Firebase Authentication
+        user_record = admin_auth.get_user_by_email(email)
+        uid = user_record.uid
+
+        # Delete user from Firebase Authentication
+        admin_auth.delete_user(uid)
+        # Delete user document from Firestore
+        firestore_db.collection('users').document(uid).delete()
+        return {"message": f"User with email {email} deleted successfully"}
+    except admin_auth.UserNotFoundError:
+        raise HTTPException(status_code=404, detail="User not found in Firebase Authentication")
+    except Exception as e:
+        error_message = parse_firebase_error(e)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+    
+def send_registration_email(to_email, uid, password, verification_link):
+    smtp_port = int(os.getenv('SMTP_PORT', '587'))
+    smtp_username = os.getenv('SMTP_USERNAME')
+    smtp_password = os.getenv('SMTP_PASSWORD')
+    smtp_server = os.getenv('SMTP_SERVER')
+
+    try:
+        # Create the email content
+        subject = "Your Account Details and Verification Link"
+        body = f"""
+        Dear User,
+
+        Your account has been created successfully. Below are your account details:
+
+        Email:{to_email}
+        UID: {uid}
+        Password: {password}
+
+        Please verify your email address by clicking on the link below:
+        {verification_link}
+
+        Best regards,
+        Babagang and Co.
+        """
+
+        # Set up the MIME
+        message = MIMEMultipart()
+        message['From'] = smtp_username
+        message['To'] = to_email
+        message['Subject'] = subject
+
+        # Attach the body with the msg instance
+        message.attach(MIMEText(body, 'plain'))
+
+        # Create SMTP session
+        session = smtplib.SMTP(smtp_server, smtp_port)  # Use Gmail's SMTP server
+        session.starttls()  # Enable security
+        session.set_debuglevel(1)
+        session.login(smtp_username, smtp_password)  # Login with your email and app password
+
+        text = message.as_string()
+        session.sendmail(smtp_username, to_email, text)
+        session.quit()
+        return f"Email Successfull Sent"
+    except Exception as e:
+        # Log the exception or handle accordingly
+        print(f"Failed to send email: {e}")
+        # Optionally, you might want to raise an exception or handle the error
 
 # Sign-in endpoint
 @app.post("/signin")
