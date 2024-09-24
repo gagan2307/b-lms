@@ -1,17 +1,20 @@
 # main.py
 
 import requests
-import bcrypt
 from fastapi import FastAPI, Depends, HTTPException, status, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from firebase_admin import auth as admin_auth, firestore
-from config.firebase_config import pyrebase_auth, firestore_db  # Import the Pyrebase auth object
-# Firebase Admin SDK is initialized upon importing firebase_config
+from config.firebase_config import firestore_db  # Import the Firestore client
+from dotenv import load_dotenv
+import os
+
+# Load environment variables
+load_dotenv()
 
 app = FastAPI()
 security = HTTPBearer()
 
-# Helper function to parse Pyrebase errors
+# Helper function to parse Firebase errors
 def parse_firebase_error(e):
     try:
         error_message = str(e)
@@ -19,18 +22,12 @@ def parse_firebase_error(e):
     except Exception:
         return "An unknown error occurred."
 
-    
-# Function to hash passwords using bcrypt
-def hash_password(password: str) -> str:
-    hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-    return hashed_pw.decode('utf-8')
-
 @app.get('/')
-def root(): 
+def root():
     return {'message': 'This is the Base URL'}
 
 # Sign-up endpoint
-@app.post("/signup")
+@app.post("/addUser")
 def signup(
     email: str = Form(...),
     password: str = Form(...),
@@ -42,6 +39,13 @@ def signup(
     role: str = Form("user")
 ):
     try:
+        # Check if the username already exists
+        users_ref = firestore_db.collection('users')
+        query = users_ref.where('username', '==', username).limit(1).stream()
+        if any(query):
+            # Username is taken
+            raise HTTPException(status_code=400, detail="Username is already taken")
+
         # Create user in Firebase Auth using Firebase Admin SDK
         user_record = admin_auth.create_user(
             email=email,
@@ -58,7 +62,7 @@ def signup(
             "dept": dept,
             "emp_type": emp_type,
             "leaves": [],
-            "role": role
+            "role": 'user'
         }
 
         # Save user data to Firestore (users collection)
@@ -72,26 +76,56 @@ def signup(
         return {"message": "User created successfully", "uid": uid}
     except admin_auth.EmailAlreadyExistsError:
         raise HTTPException(status_code=400, detail="Email already exists")
+    except HTTPException as http_exc:
+        # Re-raise HTTP exceptions
+        raise http_exc
     except Exception as e:
         error_message = parse_firebase_error(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
-
-
 
 # Sign-in endpoint
 @app.post("/signin")
 def signin(email: str = Form(...), password: str = Form(...)):
     try:
-        user = pyrebase_auth.sign_in_with_email_and_password(email, password)
-        id_token = user['idToken']
-        refresh_token = user['refreshToken']
+        # Use Firebase Authentication REST API to sign in
+        api_key = os.getenv('API_KEY')
+        if not api_key:
+            raise Exception("API key not found. Please set the API_KEY environment variable.")
+
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
+        payload = {
+            "email": email,
+            "password": password,
+            "returnSecureToken": True
+        }
+        headers = {
+            "Content-Type": "application/json"
+        }
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        id_token = data['idToken']
+        refresh_token = data['refreshToken']
+        local_id = data['localId']
+
+        # Optional: Fetch additional user data from Firestore if needed
+        user_doc = firestore_db.collection('users').document(local_id).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+        else:
+            user_data = {}
+
         return {
             "message": "User signed in successfully",
             "idToken": id_token,
             "refreshToken": refresh_token,
+            "userData": user_data
         }
+    except requests.exceptions.HTTPError as e:
+        error_message = e.response.json().get('error', {}).get('message', 'An error occurred')
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
     except Exception as e:
-        error_message = parse_pyrebase_error(e)
+        error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
 # Token verification dependency
@@ -99,6 +133,11 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     id_token = credentials.credentials
     try:
         decoded_token = admin_auth.verify_id_token(id_token)
+        if not decoded_token.get('email_verified'):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Email not verified",
+            )
         return decoded_token
     except Exception:
         raise HTTPException(
@@ -119,13 +158,14 @@ def logout():
     # Firebase tokens are stateless; logout is managed client-side
     return {"message": "User logged out successfully"}
 
-
-
-
+# Refresh token endpoint
 @app.post("/refresh-token")
 def refresh_token(refresh_token: str = Form(...)):
     try:
-        api_key = firebase_config["apiKey"]
+        api_key = os.getenv('API_KEY')
+        if not api_key:
+            raise Exception("API key not found. Please set the API_KEY environment variable.")
+
         refresh_url = f"https://securetoken.googleapis.com/v1/token?key={api_key}"
         payload = {
             'grant_type': 'refresh_token',
@@ -143,29 +183,12 @@ def refresh_token(refresh_token: str = Form(...)):
     except requests.exceptions.HTTPError as e:
         error_message = e.response.json().get('error', {}).get('message', 'An error occurred')
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="An error occurred")
-    
+    except Exception as e:
+        error_message = str(e)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+
+# Another protected route example
 @app.get("/another-protected-route")
 def another_route(decoded_token=Depends(verify_token)):
     # Access user info from decoded_token if needed
     return {"message": "This is a protected route"}
-
-
-
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    id_token = credentials.credentials
-    try:
-        decoded_token = admin_auth.verify_id_token(id_token)
-        if not decoded_token.get('email_verified'):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Email not verified",
-            )
-        return decoded_token
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
