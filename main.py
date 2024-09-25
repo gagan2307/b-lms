@@ -10,14 +10,16 @@ import uuid
 # Importing Additional Libraries
 from pydantic import BaseModel
 from typing import Dict
-from fastapi import FastAPI, Depends, HTTPException, status, Form,Body
+from fastapi import FastAPI, Depends, HTTPException, status, Form,APIRouter, Response
 from fastapi.security import HTTPBearer
 from firebase_admin import auth as admin_auth
+from fastapi.responses import RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
 from config.firebase_config import firestore_db  # Import the Firestore client
 from dotenv import load_dotenv
 
 # Importing Helper Functions
-from helper import parse_firebase_error, get_current_user, send_registration_email, verify_token
+from helper import parse_firebase_error, get_current_user, send_registration_email, verify_token, verify_password
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +27,9 @@ load_dotenv()
 # Initialising FastAPI
 app = FastAPI()
 security = HTTPBearer()
+
+# Add session middleware (if not already added)
+app.add_middleware(SessionMiddleware, secret_key="your_secret_key")
 
 # -----------------------------------------------------------------------
 # App Routes
@@ -366,7 +371,37 @@ def my_leave_history(
         error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
+
+
+# -----------------------------------------------------------------------
+# App Routes
+# Change password
+# ----------------------------------------------------------------------- 
+
+@app.put("/change-password")
+def change_password(
+    current_password: str = Form(...),  # Accept form data
+    new_password: str = Form(...),      # Accept form data
+    decoded_token=Depends(verify_token),  
+    current_user: dict = Depends(get_current_user) # Use the get_current_user function
+):
+    # Retrieve the stored hashed password from the current_user data
+    stored_hashed_password = current_user.get('password')
+
+    # Verify the current password
+    if not verify_password(current_password, stored_hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
     
+    # Hash the new password
+    hashed_new_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    
+    user_record = admin_auth.get_user_by_email(current_user['email'])
+    uid = user_record.uid
+    # Update the password in Firestore
+    user_ref = firestore_db.collection('users').document(uid)
+    user_ref.update({'password': hashed_new_password})
+
+    return {"message": "Password updated successfully"}
 
 # -----------------------------------------------------------------------
 # App Routes
@@ -382,9 +417,24 @@ def protected_route(decoded_token=Depends(verify_token)):
 # Logout endpoint (handled on the client-side)
 # -----------------------------------------------------------------------
 @app.post("/logout")
-def logout():
-    # Firebase tokens are stateless; logout is managed client-side
-    return {"message": "User logged out successfully"}
+def logout(response: Response, decoded_token=Depends(verify_token)):
+    try:
+        # Clear session or JWT token
+        response.delete_cookie(key="idToken")
+        response.delete_cookie(key="refreshToken")
+
+        # If using session-based auth, you can also clear the session
+        response.delete_cookie(key="session")
+
+        # Optionally, you can also invalidate the refresh token using Firebase REST API
+        # (requires revoking the refresh token via an admin action)
+
+        # Redirect the user to the homepage after logout
+        return RedirectResponse(url="/", status_code=302)
+
+    except Exception as e:
+        error_message = str(e)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
 
 # -----------------------------------------------------------------------

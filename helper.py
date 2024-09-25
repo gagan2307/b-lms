@@ -3,6 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from firebase_admin import auth as admin_auth, firestore
 import os
+import bcrypt
 import smtplib  # Import smtplib for SMTP
 from email.mime.text import MIMEText  # Import MIMEText
 from email.mime.multipart import MIMEMultipart  # Import MIMEMultipart
@@ -100,3 +101,8 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plain password against its hashed version."""
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
