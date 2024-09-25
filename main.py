@@ -15,12 +15,13 @@ from fastapi import FastAPI, Depends, HTTPException, status, Form, APIRouter, Re
 from fastapi.security import HTTPBearer
 from firebase_admin import auth as admin_auth
 from fastapi.responses import RedirectResponse
-from starlette.middleware.sessions import SessionMiddleware
+# from starlette.middleware.sessions import SessionMiddleware
 from config.firebase_config import firestore_db  # Import the Firestore client
 from dotenv import load_dotenv
 
 # Importing Helper Functions
 from helper import parse_firebase_error, get_current_user, send_registration_email, verify_token, verify_password
+from user import router as user_router  # Import the router from user.py
 
 # Load environment variables
 load_dotenv()
@@ -29,16 +30,17 @@ load_dotenv()
 app = FastAPI()
 security = HTTPBearer()
 
+
+
 # Add session middleware (if not already added)
-app.add_middleware(SessionMiddleware, secret_key="your_secret_key")
+# app.add_middleware(SessionMiddleware, secret_key="your_secret_key")
 
 # -----------------------------------------------------------------------
 # App Routes
 # Base Route
 # -----------------------------------------------------------------------
-@app.get('/')
-def root():
-    return {'message': 'This is the Base URL'}
+app.include_router(user_router)
+
 
 # -----------------------------------------------------------------------
 # App Routes
@@ -443,30 +445,6 @@ def change_password(
 def protected_route(decoded_token=Depends(verify_token)):
     email = decoded_token.get('email')
     return {"message": f"Welcome {email}"}
-
-# -----------------------------------------------------------------------
-# App Routes
-# Logout endpoint (handled on the client-side)
-# -----------------------------------------------------------------------
-@app.post("/logout")
-def logout(response: Response, decoded_token=Depends(verify_token)):
-    try:
-        # Clear session or JWT token
-        response.delete_cookie(key="idToken")
-        response.delete_cookie(key="refreshToken")
-
-        # If using session-based auth, you can also clear the session
-        response.delete_cookie(key="session")
-
-        # Optionally, you can also invalidate the refresh token using Firebase REST API
-        # (requires revoking the refresh token via an admin action)
-
-        # Redirect the user to the homepage after logout
-        return RedirectResponse(url="/", status_code=302)
-
-    except Exception as e:
-        error_message = str(e)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
 
 # -----------------------------------------------------------------------
