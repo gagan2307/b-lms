@@ -8,9 +8,10 @@ import json
 import uuid
 
 # Importing Additional Libraries
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Dict
-from fastapi import FastAPI, Depends, HTTPException, status, Form,APIRouter, Response
+from fastapi import FastAPI, Depends, HTTPException, status, Form, APIRouter, Response, Response, Request
 from fastapi.security import HTTPBearer
 from firebase_admin import auth as admin_auth
 from fastapi.responses import RedirectResponse
@@ -82,7 +83,8 @@ def add_user(
             "emp_type": emp_type,
             "leaves": [],
             "role": 'user',
-            "password": hashed_password  
+            "password": hashed_password,
+            "uid": uid,
         }
 
         # Save user data to Firestore (users collection)
@@ -159,29 +161,59 @@ def signin(email: str = Form(...), password: str = Form(...)):
         headers = {
             "Content-Type": "application/json"
         }
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        data = response.json()
+        response_firebase = requests.post(url, json=payload, headers=headers)
+        response_firebase.raise_for_status()
+        data = response_firebase.json()
         id_token = data['idToken']
         refresh_token = data['refreshToken']
         local_id = data['localId']
 
-        # Optional: Fetch additional user data from Firestore if needed
-        user_doc = firestore_db.collection('users').document(local_id).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-        else:
-            user_data = {}
-
-        return {
+        # Create JSON response and set the cookie
+        response = JSONResponse(content={
             "message": "User signed in successfully",
             "idToken": id_token,
-            "refreshToken": refresh_token,
-            "userData": user_data
-        }
+            "refreshToken": refresh_token
+        })
+
+        response.set_cookie(
+            key="__session",
+            value=id_token,
+            httponly=True,  # Prevents JavaScript access to the cookie
+            # secure=True,    # Only send cookie over HTTPS
+            # samesite='Lax', # Controls cross-origin cookie behavior
+            max_age=3600    # Cookie expires in 1 hour
+        )
+
+        return response
+
     except requests.exceptions.HTTPError as e:
         error_message = e.response.json().get('error', {}).get('message', 'An error occurred')
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+    except Exception as e:
+        error_message = str(e)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+    
+
+
+# -----------------------------------------------------------------------
+# App Routes
+# Sign-out endpoint
+# -----------------------------------------------------------------------
+@app.post("/signout")
+def signout(decoded_token=Depends(verify_token)):
+    try:
+        # Clear the session cookie for the logged-in user
+        response = JSONResponse(content={"message": "User logged out successfully"})
+
+        # Delete the '__session' cookie
+        response.delete_cookie(
+            key="__session",
+            httponly=True,
+            # secure=True,
+            # samesite='Lax'
+        )
+
+        return response
     except Exception as e:
         error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
