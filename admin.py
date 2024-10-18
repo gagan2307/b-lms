@@ -308,7 +308,10 @@ def get_leave_details(
         error_message = parse_firebase_error(e)
         raise HTTPException(status_code=500, detail=error_message)
     
-
+# -----------------------------------------------------------------------
+# App Routes
+# Admin: Fetch Leaves
+# -----------------------------------------------------------------------
 @router.get("/admin/fetchLeaves")
 def get_denied_leaves(
     decoded_token=Depends(verify_token),
