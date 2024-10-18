@@ -30,11 +30,6 @@ load_dotenv()
 app = FastAPI()
 security = HTTPBearer()
 
-
-
-# Add session middleware (if not already added)
-# app.add_middleware(SessionMiddleware, secret_key="your_secret_key")
-
 # -----------------------------------------------------------------------
 # App Routes
 # Base Route
