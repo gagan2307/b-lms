@@ -1,6 +1,6 @@
 # admin.py
 
-from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Form, Path, Query
 from fastapi.responses import JSONResponse
 import os
 import requests
@@ -215,6 +215,7 @@ def get_pending_leaves(
                 "from_date": leave_data.get("from_date"),
                 "to_date": leave_data.get("to_date"),
                 "leave_type": leave_data.get("leave_type"),
+                "leave_id": leave_data.get("leave_id")
             })
 
         total_number_pending_leaves = len(pending_leaves)
@@ -273,4 +274,36 @@ def update_leave_status(
 
     except Exception as e:
         error_message = str(e)
+        raise HTTPException(status_code=500, detail=error_message)
+    
+# -----------------------------------------------------------------------
+# App Routes
+# Admin: Get Leave Details
+# -----------------------------------------------------------------------
+@router.get("/admin/leave")
+def get_leave_details(
+    leave_id: str = Query(..., description="The unique identifier of the leave application"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Admin endpoint to get the details of a leave application by leave_id.
+    Only accessible by users with the 'admin' role.
+    """
+    # Authorization check: only admins can access this endpoint
+    if current_user.get("role") != 'admin':
+        raise HTTPException(status_code=403, detail="Access denied. Only admins can access leave details.")
+
+    try:
+        # Retrieve the leave document from Firestore
+        leaves_ref = firestore_db.collection('leaves')
+        leave_doc = leaves_ref.document(leave_id).get()
+        if not leave_doc.exists:
+            raise HTTPException(status_code=404, detail="Leave application not found.")
+
+        leave_data = leave_doc.to_dict()
+
+        return {"leave_details": leave_data}
+
+    except Exception as e:
+        error_message = parse_firebase_error(e)
         raise HTTPException(status_code=500, detail=error_message)
