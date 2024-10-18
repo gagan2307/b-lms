@@ -307,3 +307,63 @@ def get_leave_details(
     except Exception as e:
         error_message = parse_firebase_error(e)
         raise HTTPException(status_code=500, detail=error_message)
+    
+
+@router.get("/admin/fetchLeaves")
+def get_denied_leaves(
+    decoded_token=Depends(verify_token),
+    current_user: dict = Depends(get_current_user)  # Ensure the user is logged in
+):
+    try:
+        # Check if the user is an admin or has the necessary role to access pending leaves
+        if current_user.get("role") not in ['admin']:
+            raise HTTPException(status_code=403, detail="Access denied. Only admins can view denied leaves.")
+
+        # Fetch all leaves with status 'pending' from the leaves collection
+        leaves_ref = firestore_db.collection('leaves')
+        fetch_leaves_query = leaves_ref.where('status', 'in', ['denied', 'approved']).stream()
+        
+        approved_leaves = []
+        denied_leaves = []
+        for leave_doc in fetch_leaves_query:
+            leave_data = leave_doc.to_dict()
+            if leave_data.get('status') == 'approved' :
+                approved_leaves.append({
+                    "username": leave_data.get("username"),
+                    "applied_on": leave_data.get("applied_on"),
+                    "from_date": leave_data.get("from_date"),
+                    "to_date": leave_data.get("to_date"),
+                    "leave_type": leave_data.get("leave_type"),
+                })
+            
+            if leave_data.get('status') == 'denied' :
+                denied_leaves.append({
+                    "username": leave_data.get("username"),
+                    "applied_on": leave_data.get("applied_on"),
+                    "from_date": leave_data.get("from_date"),
+                    "to_date": leave_data.get("to_date"),
+                    "leave_type": leave_data.get("leave_type"),
+                })
+            
+            
+
+        total_number_denied_leaves = len(denied_leaves)
+
+        total_number_approved_leaves = len(approved_leaves)
+                     
+        return {
+            "total_number_denied_leaves": total_number_denied_leaves,
+            "denied_leaves": denied_leaves,
+            "total_number_approved_leaves": total_number_approved_leaves,
+            "approved_leaves": approved_leaves
+            
+        }
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        error_message = str(e)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+    
+    
+
