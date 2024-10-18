@@ -29,9 +29,15 @@ def add_user(
     lastname: str = Form(...),
     emp_type: str = Form("regular"),
     dept: str = Form("IT"),
-    role: str = Form("user")
+    role: str = Form("user"),
+    current_user: dict = Depends(get_current_user)
 ):
+    # Authorization check: only admins can delete users
+    if current_user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail="Not authorized to perform this action")
+    
     try:
+    
         # Check if the username already exists
         users_ref = firestore_db.collection('users')
         query = users_ref.where('username', '==', username).limit(1).stream()
