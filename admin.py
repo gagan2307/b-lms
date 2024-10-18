@@ -20,7 +20,7 @@ router = APIRouter()
 # App Routes
 # Add-User endpoint
 # -----------------------------------------------------------------------
-@router.post("/addUser")
+@router.post("/admin/addUser")
 def add_user(
     email: str = Form(...),
     password: str = Form(...),
@@ -83,13 +83,81 @@ def add_user(
     except Exception as e:
         error_message = parse_firebase_error(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+    
+
+# -----------------------------------------------------------------------
+# App Routes
+# Admin-Login endpoint
+# -----------------------------------------------------------------------
+@router.post("/admin/signin")
+@router.post("/admin/signin")
+def admin_signin(email: str = Form(...), password: str = Form(...)):
+    try:
+        # Use Firebase Authentication REST API to sign in
+        api_key = os.getenv('API_KEY')
+        if not api_key:
+            raise Exception("API key not found. Please set the API_KEY environment variable.")
+
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
+        payload = {
+            "email": email,
+            "password": password,
+            "returnSecureToken": True
+        }
+        headers = {
+            "Content-Type": "application/json"
+        }
+        response_firebase = requests.post(url, json=payload, headers=headers)
+        response_firebase.raise_for_status()
+        data = response_firebase.json()
+        id_token = data['idToken']
+        refresh_token = data['refreshToken']
+        local_id = data['localId']
+
+        # Use local_id as uid
+        uid = local_id
+
+        # Fetch user data from Firestore to check the role
+        user_doc = firestore_db.collection('users').document(uid).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            role = user_data.get('role')
+            if role != 'admin':
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied. Not an admin user.")
+        else:
+            raise HTTPException(status_code=404, detail="User data not found / Or User not an Admin")
+
+        # Create JSON response and set the cookie
+        response = JSONResponse(content={
+            "message": "Admin signed in successfully",
+            "idToken": id_token,
+            "refreshToken": refresh_token
+        })
+
+        response.set_cookie(
+            key="__session",
+            value=id_token,
+            httponly=True,  # Prevents JavaScript access to the cookie
+            # secure=True,    # Only send cookie over HTTPS
+            # samesite='Lax', # Controls cross-origin cookie behavior
+            max_age=3600    # Cookie expires in 1 hour
+        )
+
+        return response
+
+    except requests.exceptions.HTTPError as e:
+        error_message = e.response.json().get('error', {}).get('message', 'An error occurred')
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+    except Exception as e:
+        error_message = str(e)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
 
 # -----------------------------------------------------------------------
 # App Routes
 # Delete User via Admin Only
 # -----------------------------------------------------------------------
-@router.delete("/deleteUser")
+@router.delete("/admin/deleteUser")
 def delete_user(
     email: str = Form(...),
     current_user: dict = Depends(get_current_user)
