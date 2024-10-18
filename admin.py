@@ -96,7 +96,6 @@ def add_user(
 # Admin-Login endpoint
 # -----------------------------------------------------------------------
 @router.post("/admin/signin")
-@router.post("/admin/signin")
 def admin_signin(email: str = Form(...), password: str = Form(...)):
     try:
         # Use Firebase Authentication REST API to sign in
@@ -189,8 +188,11 @@ def delete_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
 
-
-@router.get("/pendingLeaves")
+# -----------------------------------------------------------------------
+# App Routes
+# Admin: Fetch pending leave
+# -----------------------------------------------------------------------
+@router.get("/admin/pendingLeaves")
 def get_pending_leaves(
     decoded_token=Depends(verify_token),
     current_user: dict = Depends(get_current_user)  # Ensure the user is logged in
@@ -233,3 +235,42 @@ def get_pending_leaves(
     except Exception as e:
         error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+    
+
+# -----------------------------------------------------------------------
+# App Routes
+# Admin: Update Leave Status
+# -----------------------------------------------------------------------
+@router.put("/admin/update-leave-status")
+def update_leave_status(
+    leave_id: str = Form(...),
+    status: str = Form(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Admin endpoint to update the status of a pending leave application.
+    Only accessible by users with the 'admin' role.
+    """
+    # Authorization check: only admins can update leave status
+    if current_user.get("role") not in ['admin']:
+        raise HTTPException(status_code=403, detail="Access denied. Only admins can update leave status.")
+
+    # Validate the status value
+    if status not in ['approved', 'denied']:
+        raise HTTPException(status_code=400, detail="Invalid status. Must be 'approved' or 'denied'.")
+
+    try:
+        # Find the leave document by leave_id
+        leaves_ref = firestore_db.collection('leaves')
+        leave_doc = leaves_ref.document(leave_id).get()
+        if not leave_doc.exists:
+            raise HTTPException(status_code=404, detail="Leave application not found.")
+
+        # Update the 'status' field
+        leaves_ref.document(leave_id).update({'status': status})
+
+        return {"message": f"Leave application {leave_id} status updated to '{status}'."}
+
+    except Exception as e:
+        error_message = str(e)
+        raise HTTPException(status_code=500, detail=error_message)
