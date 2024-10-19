@@ -7,6 +7,7 @@ import requests
 import bcrypt
 import json
 import uuid
+from datetime import datetime
 
 # Import helper functions
 from helper import parse_firebase_error, get_current_user, send_registration_email, verify_token, verify_password
@@ -370,3 +371,49 @@ def get_denied_leaves(
     
     
 
+@router.get("/admin/dashboard")
+def get_leave_summary(
+    date: str,  # Accept the date as a query parameter
+    decoded_token=Depends(verify_token),
+    current_user: dict = Depends(get_current_user)  # Ensure the user is logged in
+):
+    try:
+        # Check if the user is an admin or has the necessary role to access leave summary
+        if current_user.get("role") not in ['admin']:
+            raise HTTPException(status_code=403, detail="Access denied. Only admins can view leave summary.")
+
+        # Parse the date parameter in DD-MM-YYYY format
+        try:
+            current_date = datetime.strptime(date, "%d-%m-%Y").strftime("%d-%m-%Y")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use DD-MM-YYYY.")
+
+        # Fetch all leaves with status 'pending'
+        leaves_ref = firestore_db.collection('leaves')
+        pending_leaves_query = leaves_ref.where('status', '==', 'pending').stream()
+        pending_leaves = [leave_doc.to_dict() for leave_doc in pending_leaves_query]
+        total_number_pending_leaves = len(pending_leaves)
+
+        # Fetch all leaves with status 'approved' for the given date
+        approved_leaves_query = leaves_ref.where('status', '==', 'approved').stream()
+        
+        approved_users = []
+        for leave_doc in approved_leaves_query:
+            leave_data = leave_doc.to_dict()
+            # Check if 'from_date' <= current_date and 'to_date' >= current_date
+            if leave_data.get('from_date') <= current_date and leave_data.get('to_date') >= current_date:
+                approved_users.append(leave_data.get("username"))
+
+        total_approved_users = len(approved_users)
+
+        return {
+            "total_number_pending_leaves": total_number_pending_leaves,
+            "total_number_approved_leaves": total_approved_users,
+            "approved_users": approved_users
+        }
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        error_message = str(e)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
