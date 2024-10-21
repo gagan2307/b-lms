@@ -417,3 +417,4 @@ def get_leave_summary(
     except Exception as e:
         error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+    
