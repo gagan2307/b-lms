@@ -23,7 +23,6 @@ router = APIRouter()
 @router.post("/signin")
 def signin(email: str = Form(...), password: str = Form(...)):
     try:
-        # Use Firebase Authentication REST API to sign in
         api_key = os.getenv('API_KEY')
         if not api_key:
             raise Exception("API key not found. Please set the API_KEY environment variable.")
@@ -42,24 +41,16 @@ def signin(email: str = Form(...), password: str = Form(...)):
         data = response_firebase.json()
         id_token = data['idToken']
         refresh_token = data['refreshToken']
-        local_id = data['localId']
+        expires_in = int(data.get('expiresIn', 3600))
 
-        # Create JSON response and set the cookie
         response = JSONResponse(content={
             "message": "User signed in successfully",
             "idToken": id_token,
-            "refreshToken": refresh_token
+            "refreshToken": refresh_token,
+            "expiresIn": expires_in
         })
 
-        response.set_cookie(
-            key="__session",
-            value=id_token,
-            httponly=True,  # Prevents JavaScript access to the cookie
-            # secure=True,    # Only send cookie over HTTPS
-            # samesite='Lax', # Controls cross-origin cookie behavior
-            max_age=3600    # Cookie expires in 1 hour
-        )
-
+        # Set cookies if needed (optional)
         return response
 
     except requests.exceptions.HTTPError as e:
@@ -98,7 +89,7 @@ def signout(decoded_token=Depends(verify_token)):
 # App Routes
 # Refresh token endpoint
 # -----------------------------------------------------------------------
-@router.post("/refresh-token")
+@router.post("/refreshToken")
 def refresh_token(refresh_token: str = Form(...)):
     try:
         api_key = os.getenv('API_KEY')
@@ -110,15 +101,20 @@ def refresh_token(refresh_token: str = Form(...)):
             'grant_type': 'refresh_token',
             'refresh_token': refresh_token
         }
-        response = requests.post(refresh_url, data=payload)
-        response.raise_for_status()
-        data = response.json()
+        response_firebase = requests.post(refresh_url, data=payload)
+        response_firebase.raise_for_status()
+        data = response_firebase.json()
         new_id_token = data['id_token']
-        new_refresh_token = data['refresh_token']
-        return {
+        expires_in = int(data.get('expires_in', 3600))
+
+        response = JSONResponse(content={
             "idToken": new_id_token,
-            "refreshToken": new_refresh_token,
-        }
+            "expiresIn": expires_in
+        })
+
+        # Set cookies if needed (optional)
+        return response
+
     except requests.exceptions.HTTPError as e:
         error_message = e.response.json().get('error', {}).get('message', 'An error occurred')
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)

@@ -29,3 +29,5 @@ venv_bak/
 
 # Pyre type checker
 .pyre/
+
+**/__pycache__/

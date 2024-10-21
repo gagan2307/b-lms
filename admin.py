@@ -370,7 +370,6 @@ def get_denied_leaves(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
     
     
-
 @router.get("/admin/dashboard")
 def get_leave_summary(
     date: str,  # Accept the date as a query parameter
