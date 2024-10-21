@@ -369,4 +369,3 @@ def get_denied_leaves(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
     
     
-
