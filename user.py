@@ -16,10 +16,6 @@ from config.firebase_config import firestore_db
 
 router = APIRouter()
 
-# -----------------------------------------------------------------------
-# App Routes
-# Sign-in endpoint
-# -----------------------------------------------------------------------
 @router.post("/signin")
 def signin(email: str = Form(...), password: str = Form(...)):
     try:
@@ -27,6 +23,7 @@ def signin(email: str = Form(...), password: str = Form(...)):
         if not api_key:
             raise Exception("API key not found. Please set the API_KEY environment variable.")
 
+        # Firebase Authentication - Sign in with email and password
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
         payload = {
             "email": email,
@@ -43,11 +40,23 @@ def signin(email: str = Form(...), password: str = Form(...)):
         refresh_token = data['refreshToken']
         expires_in = int(data.get('expiresIn', 3600))
 
+        
+        # Fetch the username from Firestore
+        user_docs = firestore_db.collection('users').where('email', '==', email).limit(1).get()
+        if not user_docs:
+            raise Exception("User not found in Firestore.")
+        
+        # Assume only one document will match the email query
+        user_doc = user_docs[0].to_dict()
+        username = user_doc.get('username', 'Unknown')
+
+        # Construct the response
         response = JSONResponse(content={
             "message": "User signed in successfully",
             "idToken": id_token,
             "refreshToken": refresh_token,
-            "expiresIn": expires_in
+            "expiresIn": expires_in,
+            "username": username
         })
 
         # Set cookies if needed (optional)
