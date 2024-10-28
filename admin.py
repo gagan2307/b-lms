@@ -417,3 +417,49 @@ def get_leave_summary(
         error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
     
+
+@router.get("/admin/userDetails")
+def get_user_details(
+    decoded_token=Depends(verify_token),
+    current_user: dict = Depends(get_current_user)  # Ensure the user is logged in
+):
+    try:
+        # Check if the user is an admin or has the necessary role to access user details
+        if current_user.get("role") not in ['admin']:
+            raise HTTPException(status_code=403, detail="Access denied. Only admins can view user details.")
+
+        # Fetch all user documents from the users collection
+        users_ref = firestore_db.collection('users')
+        users_query = users_ref.stream()
+
+        user_details = []
+        for user_doc in users_query:
+            user_data = user_doc.to_dict()
+            # Exclude users with the role "admin"
+            if user_data.get("role") == "admin":
+                continue
+            user_details.append({
+                "username": user_data.get("username"),
+                "fullname": f"{user_data.get('firstname', '')} {user_data.get('lastname', '')}".strip(),
+                "email": user_data.get("email"),
+                "emp_type": user_data.get("emp_type")
+            })
+
+        total_users = len(user_details)
+
+        if total_users == 0:
+            return {
+                "message": "No users found in the database.",
+                "total_users": 0
+            }
+        
+        return {
+            "total_users": total_users,
+            "user_details": user_details
+        }
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        error_message = str(e)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)

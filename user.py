@@ -175,7 +175,11 @@ def apply_leave(
         leave_ref = firestore_db.collection('leaves').where('username', '==', username).stream()
         for leave in leave_ref:
             existing_leave = leave.to_dict()
-            if (from_date <= existing_leave['to_date'] and to_date >= existing_leave['from_date']):
+            existing_from_date = existing_leave['from_date']
+            existing_to_date = existing_leave['to_date']
+
+            # Check for overlap considering same day as valid leave
+            if (from_date <= existing_to_date and to_date >= existing_from_date) and not (from_date == existing_from_date and to_date == existing_to_date):
                 raise HTTPException(status_code=400, detail="Leave dates overlap with existing leave")
 
         # Generate a unique leave_id
@@ -209,7 +213,6 @@ def apply_leave(
     except Exception as e:
         error_message = str(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
-
 
 # -----------------------------------------------------------------------
 # App Routes
