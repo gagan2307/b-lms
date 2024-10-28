@@ -75,11 +75,11 @@ def add_user(
 
         # Optional: Send email verification link
         link = admin_auth.generate_email_verification_link(email)
-        # You need to send this link to the user's email address
-        # Implement email sending functionality (e.g., using SMTP, SendGrid)
+        # You need to send this link to the user's email addres
 
         # Send email containing uid, password, and verification link
         response = send_registration_email(email, uid, password, link)
+        print('Response from send email', response)
 
         return {"message": "User created successfully", "uid": uid, "verificationLink": link, "Email Status": response}
     except admin_auth.EmailAlreadyExistsError:
@@ -333,6 +333,7 @@ def get_denied_leaves(
             leave_data = leave_doc.to_dict()
             if leave_data.get('status') == 'approved' :
                 approved_leaves.append({
+                    "leave_id": leave_data.get('leave_id'),  
                     "username": leave_data.get("username"),
                     "applied_on": leave_data.get("applied_on"),
                     "from_date": leave_data.get("from_date"),
@@ -342,6 +343,7 @@ def get_denied_leaves(
             
             if leave_data.get('status') == 'denied' :
                 denied_leaves.append({
+                    "leave_id": leave_data.get('leave_id'),  
                     "username": leave_data.get("username"),
                     "applied_on": leave_data.get("applied_on"),
                     "from_date": leave_data.get("from_date"),

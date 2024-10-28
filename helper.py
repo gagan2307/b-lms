@@ -35,8 +35,9 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
 
-def send_registration_email(to_email, uid, password, verification_link):
-    smtp_port = int(os.getenv('SMTP_PORT', '587'))
+def send_registration_email(to_email, uid, password, verification_link, use_ssl=True):
+    print('In Send Registration Email')
+    smtp_port = int(os.getenv('SMTP_PORT', '587'))  # Default to 587 for TLS
     smtp_username = os.getenv('SMTP_USERNAME')
     smtp_password = os.getenv('SMTP_PASSWORD')
     smtp_server = os.getenv('SMTP_SERVER')
@@ -49,7 +50,7 @@ def send_registration_email(to_email, uid, password, verification_link):
 
         Your account has been created successfully. Below are your account details:
 
-        Email:{to_email}
+        Email: {to_email}
         UID: {uid}
         Password: {password}
 
@@ -69,20 +70,28 @@ def send_registration_email(to_email, uid, password, verification_link):
         # Attach the body with the msg instance
         message.attach(MIMEText(body, 'plain'))
 
-        # Create SMTP session
-        session = smtplib.SMTP(smtp_server, smtp_port)  # Use Gmail's SMTP server
-        session.starttls()  # Enable security
+        # Determine whether to use SSL or STARTTLS
+        if use_ssl:
+            # Use SMTP over SSL (port 465)
+            smtp_port = int(os.getenv('SMTP_SSL_PORT', '465'))  # Default to 465 for SSL
+            session = smtplib.SMTP_SSL(smtp_server, smtp_port)
+        else:
+            # Use SMTP with STARTTLS (port 587)
+            session = smtplib.SMTP(smtp_server, smtp_port)
+            session.starttls()  # Enable security
+
         session.set_debuglevel(1)
-        session.login(smtp_username, smtp_password)  # Login with your email and app password
+        session.login(smtp_username, smtp_password)  # Login with your email and password
 
         text = message.as_string()
         session.sendmail(smtp_username, to_email, text)
         session.quit()
-        return f"Email Successfull Sent"
+        return "Email Successfully Sent"
     except Exception as e:
         # Log the exception or handle accordingly
         print(f"Failed to send email: {e}")
         # Optionally, you might want to raise an exception or handle the error
+        return f"Failed to send email: {e}"
 
 # Token verification dependency
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
