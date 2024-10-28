@@ -403,7 +403,12 @@ def get_leave_summary(
             leave_data = leave_doc.to_dict()
             # Check if 'from_date' <= current_date and 'to_date' >= current_date
             if leave_data.get('from_date') <= current_date and leave_data.get('to_date') >= current_date:
-                approved_users.append(leave_data.get("username"))
+                approved_users.append(
+                    {
+                        "username":leave_data.get("username"),
+                        "leave_id": leave_data.get('leave_id')
+                    }
+                )
 
         total_approved_users = len(approved_users)
 
